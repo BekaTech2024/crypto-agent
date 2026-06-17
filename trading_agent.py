@@ -201,12 +201,25 @@ def execute_trade(client: Client, symbol: str, action: str, amount_pct: float,
 
 # ─── CYCLE PRINCIPAL ─────────────────────────────────────────────────────────
 
-def run_cycle(binance_client: Client):
+def run_cycle(binance_client):
     log.info("═══ Nouveau cycle d'analyse ═══")
     try:
-        prices    = get_prices()
-        portfolio = get_portfolio(binance_client)
-        analysis  = analyze_with_claude(prices, portfolio)
+        prices = get_prices()
+        
+        if not prices:
+            log.error("Impossible de récupérer les prix")
+            telegram_alert("Erreur", "Impossible de récupérer les prix depuis CoinGecko", "⚠️")
+            return
+
+        portfolio = {
+            "USDT": 10000.0,
+            "BTC": 0.05,
+            "ETH": 0.30,
+            "SOL": 2.00,
+            "BNB": 0.50
+        }
+
+        analysis = analyze_with_claude(prices, portfolio)
 
         mode = "🔴 RÉEL" if not RISK["simulation_mode"] else "🟡 SIMULATION"
         header = (
@@ -219,7 +232,6 @@ def run_cycle(binance_client: Client):
         results = []
         for d in analysis.get("decisions", []):
             if d["confidence"] < RISK["min_confidence"]:
-                log.info(f"Skip {d['symbol']} — confiance {d['confidence']}% < {RISK['min_confidence']}%")
                 results.append(f"⏭ {d['symbol'].replace('USDT','')}: ignoré (confiance {d['confidence']}%)")
                 continue
 
