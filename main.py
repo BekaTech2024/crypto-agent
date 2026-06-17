@@ -14,8 +14,8 @@ logging.basicConfig(
     ]
 )
 
-from agent.trading_agent import main as run_agent
-from agent.telegram_bot import run_telegram_bot
+from trading_agent import main as run_agent
+from telegram_bot import run_telegram_bot
 
 if __name__ == "__main__":
     t1 = threading.Thread(target=run_agent, daemon=True)
