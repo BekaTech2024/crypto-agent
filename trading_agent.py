@@ -89,28 +89,29 @@ def telegram_alert(title: str, body: str, emoji="🤖"):
 
 def get_prices() -> dict:
     try:
-        ids = ",".join(COINS)
-        url = (
-            f"https://api.coingecko.com/api/v3/simple/price"
-            f"?ids={ids}&vs_currencies=usd"
-            f"&include_24hr_change=true&include_24hr_vol=true"
-        )
-        headers = {"accept": "application/json"}
-        r = requests.get(url, timeout=15, headers=headers)
+        symbols_str = "BTC,ETH,SOL,BNB,ADA,AVAX,LINK,DOT,XRP,MATIC"
+        url = f"https://min-api.cryptocompare.com/data/pricemultifull?fsyms={symbols_str}&tsyms=USD"
+        r = requests.get(url, timeout=15)
         data = r.json()
+        raw = data.get("RAW", {})
         prices = {}
-        for coin_id in COINS:
-            if coin_id in data and "usd" in data[coin_id]:
-                prices[SYMBOLS[coin_id]] = {
-                    "price":  data[coin_id]["usd"],
-                    "change": data[coin_id].get("usd_24h_change", 0),
-                    "volume": data[coin_id].get("usd_24h_vol", 0),
-                    "id":     coin_id
+        mapping = {
+            "BTC":"BTC","ETH":"ETH","SOL":"SOL","BNB":"BNB",
+            "ADA":"ADA","AVAX":"AVAX","LINK":"LINK","DOT":"DOT",
+            "XRP":"XRP","MATIC":"MATIC"
+        }
+        for sym in mapping:
+            if sym in raw and "USD" in raw[sym]:
+                d = raw[sym]["USD"]
+                prices[sym] = {
+                    "price":  d["PRICE"],
+                    "change": d["CHANGEPCT24HOUR"],
+                    "volume": d["VOLUME24HOURTO"],
                 }
         log.info(f"Prix récupérés: {len(prices)} cryptos")
         return prices
     except Exception as e:
-        log.error(f"Erreur CoinGecko: {e}")
+        log.error(f"Erreur prix: {e}")
         return {}
 
 # ─── ANALYSE RAPIDE (sans Claude) ────────────────────────────────────────────
