@@ -71,33 +71,29 @@ def telegram_alert(title, body, emoji="🤖"):
 
 def get_prices():
     try:
-        symbols = [
-            "BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT",
-            "ADAUSDT","AVAXUSDT","LINKUSDT","DOTUSDT",
-            "XRPUSDT","MATICUSDT"
-        ]
-        name_map = {
-            "BTCUSDT":"BTC","ETHUSDT":"ETH","SOLUSDT":"SOL",
-            "BNBUSDT":"BNB","ADAUSDT":"ADA","AVAXUSDT":"AVAX",
-            "LINKUSDT":"LINK","DOTUSDT":"DOT","XRPUSDT":"XRP",
-            "MATICUSDT":"MATIC"
+        pairs = {
+            "XBTUSD":"BTC","ETHUSD":"ETH","SOLUSD":"SOL",
+            "ADAUSD":"ADA","AVAXUSD":"AVAX","LINKUSD":"LINK",
+            "DOTUSD":"DOT","XRPUSD":"XRP","MATICUSD":"MATIC"
         }
-        url = "https://api.binance.com/api/v3/ticker/24hr"
-        r = requests.get(url, timeout=15)
+        url = "https://api.kraken.com/0/public/Ticker"
+        params = {"pair": ",".join(pairs.keys())}
+        r = requests.get(url, params=params, timeout=15)
         data = r.json()
-        if not isinstance(data, list):
-            log.error(f"Format inattendu Binance: {str(data)[:100]}")
+        if data.get("error"):
+            log.error(f"Erreur Kraken: {data['error']}")
             return {}
-        lookup = {d["symbol"]: d for d in data}
         prices = {}
-        for sym, name in name_map.items():
-            if sym in lookup:
-                d = lookup[sym]
-                prices[name] = {
-                    "price":  float(d["lastPrice"]),
-                    "change": float(d["priceChangePercent"]),
-                    "volume": float(d["quoteVolume"]),
-                }
+        for pair, symbol in pairs.items():
+            result = data.get("result", {})
+            for key, val in result.items():
+                if pair[:3] in key or pair in key:
+                    prices[symbol] = {
+                        "price":  float(val["c"][0]),
+                        "change": 0.0,
+                        "volume": float(val["v"][1]),
+                    }
+                    break
         log.info(f"Prix récupérés: {len(prices)} cryptos")
         return prices
     except Exception as e:
