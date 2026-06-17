@@ -41,18 +41,20 @@ RISK = {
 }
 
 PORTFOLIO = {
-    "USDT": 8000.0,
-    "BTC":  0.05,
-    "ETH":  0.30,
-    "SOL":  2.00,
-    "BNB":  0.50,
-    "ADA":  100.0,
-    "AVAX": 3.0,
-    "LINK": 10.0,
-    "DOT":  5.0,
-    "XRP":  50.0,
-    "MATIC": 100.0,
+    "USDT": 1000.0,
+    "BTC":  0.0,
+    "ETH":  0.0,
+    "SOL":  0.0,
+    "BNB":  0.0,
+    "ADA":  0.0,
+    "AVAX": 0.0,
+    "LINK": 0.0,
+    "DOT":  0.0,
+    "XRP":  0.0,
+    "MATIC": 0.0,
 }
+
+INITIAL_VALUE = 1000.0
 
 prev_prices = {}
 
@@ -129,6 +131,8 @@ def deep_analysis(prices):
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         portfolio_value = PORTFOLIO.get("USDT", 0)
+        pnl = portfolio_value - INITIAL_VALUE
+pnl_pct = (pnl / INITIAL_VALUE) * 100
         for symbol, data in prices.items():
             portfolio_value += PORTFOLIO.get(symbol, 0) * data["price"]
 
@@ -193,11 +197,13 @@ Réponds UNIQUEMENT en JSON valide:
         mode = "🔴 RÉEL" if not RISK["simulation_mode"] else "🟡 SIMULATION"
         best = analysis.get("best_opportunity", "—")
         header = (
-            f"📊 *Analyse approfondie* — {datetime.now().strftime('%H:%M')}\n"
-            f"Mode: {mode} | Risque: {analysis.get('risk_level','?')}\n"
-            f"💡 Meilleure opportunité: {best}\n\n"
-            f"_{analysis.get('market_summary','')}_\n\n"
-        )
+    f"📊 *Analyse approfondie* — {datetime.now().strftime('%H:%M')}\n"
+    f"Mode: {mode} | Risque: {analysis.get('risk_level','?')}\n"
+    f"💰 Portfolio: ${portfolio_value:,.2f} "
+    f"({'+'if pnl>=0 else ''}{pnl_pct:.2f}% depuis début)\n"
+    f"💡 Meilleure opportunité: {best}\n\n"
+    f"_{analysis.get('market_summary','')}_\n\n"
+)
 
         results = []
         for d in analysis.get("decisions", []):
