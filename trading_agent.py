@@ -95,7 +95,11 @@ def get_prices() -> dict:
         url = "https://api.binance.com/api/v3/ticker/24hr"
         r = requests.get(url, timeout=15)
         data = r.json()
-        lookup = {d["symbol"]: d for d in data}
+        if isinstance(data, list):
+    lookup = {d["symbol"]: d for d in data}
+else:
+    log.error(f"Format inattendu: {data}")
+    return {}
         prices = {}
         name_map = {
             "BTCUSDT":"BTC","ETHUSDT":"ETH","SOLUSDT":"SOL",
