@@ -89,24 +89,27 @@ def telegram_alert(title: str, body: str, emoji="🤖"):
 
 def get_prices() -> dict:
     try:
-        symbols_str = "BTC,ETH,SOL,BNB,ADA,AVAX,LINK,DOT,XRP,MATIC"
-        url = f"https://min-api.cryptocompare.com/data/pricemultifull?fsyms={symbols_str}&tsyms=USD"
+        symbols = ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT",
+                   "ADAUSDT","AVAXUSDT","LINKUSDT","DOTUSDT",
+                   "XRPUSDT","MATICUSDT"]
+        url = "https://api.binance.com/api/v3/ticker/24hr"
         r = requests.get(url, timeout=15)
         data = r.json()
-        raw = data.get("RAW", {})
+        lookup = {d["symbol"]: d for d in data}
         prices = {}
-        mapping = {
-            "BTC":"BTC","ETH":"ETH","SOL":"SOL","BNB":"BNB",
-            "ADA":"ADA","AVAX":"AVAX","LINK":"LINK","DOT":"DOT",
-            "XRP":"XRP","MATIC":"MATIC"
+        name_map = {
+            "BTCUSDT":"BTC","ETHUSDT":"ETH","SOLUSDT":"SOL",
+            "BNBUSDT":"BNB","ADAUSDT":"ADA","AVAXUSDT":"AVAX",
+            "LINKUSDT":"LINK","DOTUSDT":"DOT","XRPUSDT":"XRP",
+            "MATICUSDT":"MATIC"
         }
-        for sym in mapping:
-            if sym in raw and "USD" in raw[sym]:
-                d = raw[sym]["USD"]
-                prices[sym] = {
-                    "price":  d["PRICE"],
-                    "change": d["CHANGEPCT24HOUR"],
-                    "volume": d["VOLUME24HOURTO"],
+        for sym, name in name_map.items():
+            if sym in lookup:
+                d = lookup[sym]
+                prices[name] = {
+                    "price":  float(d["lastPrice"]),
+                    "change": float(d["priceChangePercent"]),
+                    "volume": float(d["quoteVolume"]),
                 }
         log.info(f"Prix récupérés: {len(prices)} cryptos")
         return prices
