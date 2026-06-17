@@ -63,12 +63,15 @@ cycle_count    = 0
 
 def telegram(msg):
     try:
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg[:3000], "parse_mode": "Markdown"},
-            timeout=10
-        )
-        log.info(f"Telegram sendMessage: {len(msg)} chars")
+        parts = [msg[i:i+2000] for i in range(0, len(msg), 2000)]
+        for part in parts:
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                json={"chat_id": TELEGRAM_CHAT_ID, "text": part, "parse_mode": "Markdown"},
+                timeout=10
+            )
+            time.sleep(0.5)
+        log.info(f"Telegram: {len(msg)} chars en {len(parts)} message(s)")
     except Exception as e:
         log.error(f"Telegram error: {e}")
 
