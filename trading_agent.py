@@ -251,18 +251,13 @@ def main():
         f"Analyse toutes les heures",
         "🚀"
     )
-
-    binance_client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY)
-
+    binance_client = None
     # Premier cycle immédiat
     run_cycle(binance_client)
-
     # Ensuite toutes les heures
     schedule.every(1).hours.do(run_cycle, binance_client=binance_client)
-
     while True:
         schedule.run_pending()
         time.sleep(60)
-
 if __name__ == "__main__":
     main()
