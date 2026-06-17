@@ -1,6 +1,6 @@
 """
-Crypto Trading Agent — Berkan
-Agent autonome connecté à Claude Sonnet, Binance et Telegram
+Crypto Trading Agent v2 — Berkan
+Analyse hybride : rapide (15min) + approfondie (1h) avec Claude Sonnet
 """
 
 import os
@@ -9,12 +9,12 @@ import time
 import logging
 import requests
 from datetime import datetime
-from binance.client import Client
-from binance.exceptions import BinanceAPIException
 import anthropic
 import schedule
 
 os.makedirs('logs', exist_ok=True)
+os.makedirs('config', exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -27,30 +27,56 @@ log = logging.getLogger(__name__)
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 
-ANTHROPIC_API_KEY   = os.getenv("ANTHROPIC_API_KEY")
-BINANCE_API_KEY     = os.getenv("BINANCE_API_KEY")
-BINANCE_SECRET_KEY  = os.getenv("BINANCE_SECRET_KEY")
-TELEGRAM_TOKEN      = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID    = os.getenv("TELEGRAM_CHAT_ID")
+ANTHROPIC_API_KEY  = os.getenv("ANTHROPIC_API_KEY")
+TELEGRAM_TOKEN     = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID")
 
-# Paramètres de risque — modifiables sans toucher au code
 RISK = {
-    "max_trade_pct":    0.20,   # max 20% du portfolio par trade
-    "stop_loss_pct":    0.08,   # stop-loss à -8%
-    "take_profit_pct":  0.15,   # take-profit à +15%
-    "min_confidence":   70,     # confiance IA minimum pour exécuter
-    "simulation_mode":  True,   # ← mettre False pour vrais trades
+    "max_trade_pct":   0.20,
+    "stop_loss_pct":   0.08,
+    "take_profit_pct": 0.15,
+    "min_confidence":  70,
+    "simulation_mode": True,
+    "alert_threshold": 3.0,  # % de variation pour alerte rapide
 }
 
-COINS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]
+COINS = [
+    "bitcoin", "ethereum", "solana", "binancecoin",
+    "cardano", "avalanche-2", "chainlink", "polkadot",
+    "ripple", "matic-network"
+]
+
+SYMBOLS = {
+    "bitcoin": "BTC", "ethereum": "ETH", "solana": "SOL",
+    "binancecoin": "BNB", "cardano": "ADA", "avalanche-2": "AVAX",
+    "chainlink": "LINK", "polkadot": "DOT", "ripple": "XRP",
+    "matic-network": "MATIC"
+}
+
+# Portfolio simulé
+PORTFOLIO = {
+    "USDT": 8000.0,
+    "BTC":  0.05,
+    "ETH":  0.30,
+    "SOL":  2.00,
+    "BNB":  0.50,
+    "ADA":  100.0,
+    "AVAX": 3.0,
+    "LINK": 10.0,
+    "DOT":  5.0,
+    "XRP":  50.0,
+    "MATIC": 100.0,
+}
+
+prev_prices = {}
 
 # ─── TELEGRAM ────────────────────────────────────────────────────────────────
 
-def telegram(msg: str, parse_mode="Markdown"):
+def telegram(msg: str):
     try:
         requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": parse_mode},
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"},
             timeout=10
         )
     except Exception as e:
@@ -59,217 +85,209 @@ def telegram(msg: str, parse_mode="Markdown"):
 def telegram_alert(title: str, body: str, emoji="🤖"):
     telegram(f"{emoji} *{title}*\n\n{body}")
 
-# ─── MARCHÉ ──────────────────────────────────────────────────────────────────
+# ─── PRIX ────────────────────────────────────────────────────────────────────
 
 def get_prices() -> dict:
-    """Prix + variation 24h via CoinGecko (gratuit, pas de clé)"""
-    ids = "bitcoin,ethereum,solana,binancecoin"
-    url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true"
-    r = requests.get(url, timeout=10)
-    data = r.json()
-    mapping = {
-        "BTCUSDT": "bitcoin",
-        "ETHUSDT": "ethereum",
-        "SOLUSDT": "solana",
-        "BNBUSDT": "binancecoin"
-    }
-    return {
-        symbol: {
-            "price":  data[cg_id]["usd"],
-            "change": data[cg_id].get("usd_24h_change", 0),
-            "volume": data[cg_id].get("usd_24h_vol", 0)
-        }
-        for symbol, cg_id in mapping.items()
-        if cg_id in data
-    }
+    try:
+        ids = ",".join(COINS)
+        url = (
+            f"https://api.coingecko.com/api/v3/simple/price"
+            f"?ids={ids}&vs_currencies=usd"
+            f"&include_24hr_change=true&include_24hr_vol=true"
+        )
+        r = requests.get(url, timeout=15)
+        data = r.json()
+        prices = {}
+        for coin_id in COINS:
+            if coin_id in data:
+                prices[SYMBOLS[coin_id]] = {
+                    "price":  data[coin_id]["usd"],
+                    "change": data[coin_id].get("usd_24h_change", 0),
+                    "volume": data[coin_id].get("usd_24h_vol", 0),
+                    "id":     coin_id
+                }
+        log.info(f"Prix récupérés: {len(prices)} cryptos")
+        return prices
+    except Exception as e:
+        log.error(f"Erreur CoinGecko: {e}")
+        return {}
 
-def get_portfolio(client: Client) -> dict:
-    """Récupère le solde réel depuis Binance"""
-    if RISK["simulation_mode"]:
-        return {
-            "USDT":  10000.0,
-            "BTC":   0.05,
-            "ETH":   0.30,
-            "SOL":   2.00,
-            "BNB":   0.50
-        }
-    account = client.get_account()
-    return {
-        b["asset"]: float(b["free"])
-        for b in account["balances"]
-        if float(b["free"]) > 0
-    }
+# ─── ANALYSE RAPIDE (sans Claude) ────────────────────────────────────────────
 
-# ─── ANALYSE IA ──────────────────────────────────────────────────────────────
+def quick_analysis(prices: dict):
+    """Analyse rapide toutes les 15min — détecte les mouvements brusques"""
+    global prev_prices
+    alerts = []
 
-def analyze_with_claude(prices: dict, portfolio: dict) -> dict:
-    """Envoie les données à Claude et récupère les décisions"""
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
-    portfolio_value = portfolio.get("USDT", 0)
     for symbol, data in prices.items():
-        asset = symbol.replace("USDT", "")
-        held = portfolio.get(asset, 0)
-        portfolio_value += held * data["price"]
+        if symbol in prev_prices:
+            prev = prev_prices[symbol]["price"]
+            curr = data["price"]
+            change_pct = ((curr - prev) / prev) * 100
 
-    price_lines = "\n".join([
-        f"  {s}: ${d['price']:,.2f} ({d['change']:+.2f}% 24h, vol ${d['volume']/1e6:.0f}M)"
-        for s, d in prices.items()
-    ])
+            if abs(change_pct) >= RISK["alert_threshold"]:
+                direction = "🚀" if change_pct > 0 else "📉"
+                alerts.append(
+                    f"{direction} *{symbol}* : {change_pct:+.2f}% en 15min\n"
+                    f"   Prix: ${curr:,.2f}"
+                )
 
-    holdings_lines = "\n".join([
-        f"  {s.replace('USDT','')}: {portfolio.get(s.replace('USDT',''), 0):.4f} "
-        f"= ${portfolio.get(s.replace('USDT',''), 0) * d['price']:,.0f}"
-        for s, d in prices.items()
-    ])
+    if alerts:
+        msg = "⚡ *Alerte mouvement rapide*\n\n" + "\n".join(alerts)
+        telegram(msg)
+        log.info(f"Alertes envoyées: {len(alerts)}")
 
-    prompt = f"""Tu es un agent de trading crypto autonome. Analyse les données suivantes et génère des décisions précises.
+    prev_prices = {s: d for s, d in prices.items()}
+
+# ─── ANALYSE APPROFONDIE (avec Claude) ───────────────────────────────────────
+
+def deep_analysis(prices: dict):
+    """Analyse complète toutes les heures avec Claude Sonnet"""
+    if not prices:
+        log.error("Pas de prix disponibles")
+        telegram_alert("Erreur", "Impossible de récupérer les prix", "⚠️")
+        return
+
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+        portfolio_value = PORTFOLIO.get("USDT", 0)
+        for symbol, data in prices.items():
+            held = PORTFOLIO.get(symbol, 0)
+            portfolio_value += held * data["price"]
+
+        price_lines = "\n".join([
+            f"  {sym}: ${d['price']:,.4f} ({d['change']:+.2f}% 24h, vol ${d['volume']/1e6:.0f}M)"
+            for sym, d in prices.items()
+        ])
+
+        holdings_lines = "\n".join([
+            f"  {sym}: {PORTFOLIO.get(sym, 0)} = ${PORTFOLIO.get(sym, 0) * d['price']:,.0f}"
+            for sym, d in prices.items()
+            if PORTFOLIO.get(sym, 0) > 0
+        ])
+
+        prompt = f"""Tu es un agent de trading crypto autonome expert. Analyse ces données et génère des décisions précises.
 
 MARCHÉ ({datetime.now().strftime('%Y-%m-%d %H:%M')} UTC):
 {price_lines}
 
-PORTEFEUILLE (total ~${portfolio_value:,.0f} USDT):
-  Cash USDT: ${portfolio.get('USDT', 0):,.2f}
+PORTEFEUILLE SIMULÉ (total ~${portfolio_value:,.0f} USDT):
+  Cash USDT: ${PORTFOLIO.get('USDT', 0):,.2f}
 {holdings_lines}
 
-RÈGLES DE RISQUE:
+RÈGLES:
 - Max {RISK['max_trade_pct']*100:.0f}% du portfolio par trade
 - Stop-loss: -{RISK['stop_loss_pct']*100:.0f}%
 - Take-profit: +{RISK['take_profit_pct']*100:.0f}%
-- N'exécuter que si confiance >= {RISK['min_confidence']}%
+- Exécuter seulement si confiance >= {RISK['min_confidence']}%
+- Analyse momentum, volume, tendance 24h
 
-Réponds UNIQUEMENT en JSON valide (pas de markdown):
+Réponds UNIQUEMENT en JSON valide:
 {{
   "decisions": [
     {{
-      "symbol": "BTCUSDT",
+      "symbol": "BTC",
       "action": "BUY|SELL|HOLD",
       "amount_pct": 10,
-      "reason": "explication courte",
+      "reason": "raison courte",
       "confidence": 78,
       "stop_loss": 61000,
       "take_profit": 78000
     }}
   ],
-  "market_summary": "résumé global du marché en 1-2 phrases",
-  "risk_level": "LOW|MEDIUM|HIGH"
+  "market_summary": "résumé global en 1-2 phrases",
+  "risk_level": "LOW|MEDIUM|HIGH",
+  "best_opportunity": "SYMBOL — pourquoi"
 }}"""
 
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1000,
-        messages=[{"role": "user", "content": prompt}]
-    )
+        message = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1500,
+            messages=[{"role": "user", "content": prompt}]
+        )
 
-    raw = message.content[0].text.strip()
-    raw = raw.replace("```json", "").replace("```", "").strip()
-    return json.loads(raw)
+        raw = message.content[0].text.strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        analysis = json.loads(raw)
 
-# ─── EXÉCUTION ───────────────────────────────────────────────────────────────
-
-def execute_trade(client: Client, symbol: str, action: str, amount_pct: float,
-                  portfolio: dict, prices: dict) -> str:
-    """Exécute un trade sur Binance (ou simule)"""
-    asset = symbol.replace("USDT", "")
-    price = prices[symbol]["price"]
-    portfolio_value = portfolio.get("USDT", 0)
-    for s, d in prices.items():
-        portfolio_value += portfolio.get(s.replace("USDT", ""), 0) * d["price"]
-
-    trade_value = portfolio_value * (amount_pct / 100)
-
-    if RISK["simulation_mode"]:
-        log.info(f"[SIM] {action} {asset} — ${trade_value:.0f} @ ${price:,.2f}")
-        return f"✅ *[SIMULATION]* {action} {asset}\n💰 Montant: ${trade_value:.0f}\n📈 Prix: ${price:,.2f}"
-
-    try:
-        if action == "BUY":
-            qty = round(trade_value / price, 6)
-            order = client.order_market_buy(symbol=symbol, quantity=qty)
-        elif action == "SELL":
-            qty = min(round(trade_value / price, 6), portfolio.get(asset, 0))
-            if qty <= 0:
-                return f"⚠️ Pas assez de {asset} à vendre"
-            order = client.order_market_sell(symbol=symbol, quantity=qty)
-        else:
-            return f"⏸ {asset}: HOLD — aucune action"
-
-        return f"✅ *{action} {asset} exécuté*\nOrdre ID: {order['orderId']}\nQté: {qty}\nPrix: ${price:,.2f}"
-    except BinanceAPIException as e:
-        log.error(f"Binance error: {e}")
-        return f"❌ Erreur Binance: {e.message}"
-
-# ─── CYCLE PRINCIPAL ─────────────────────────────────────────────────────────
-
-def run_cycle(binance_client):
-    log.info("═══ Nouveau cycle d'analyse ═══")
-    try:
-        prices = get_prices()
-        
-        if not prices:
-            log.error("Impossible de récupérer les prix")
-            telegram_alert("Erreur", "Impossible de récupérer les prix depuis CoinGecko", "⚠️")
-            return
-
-        portfolio = {
-            "USDT": 10000.0,
-            "BTC": 0.05,
-            "ETH": 0.30,
-            "SOL": 2.00,
-            "BNB": 0.50
-        }
-
-        analysis = analyze_with_claude(prices, portfolio)
-
+        # Construire le rapport Telegram
         mode = "🔴 RÉEL" if not RISK["simulation_mode"] else "🟡 SIMULATION"
+        best = analysis.get("best_opportunity", "—")
+
         header = (
-            f"📊 *Rapport agent* — {datetime.now().strftime('%H:%M')}\n"
-            f"Mode: {mode}\n"
-            f"Risque marché: {analysis.get('risk_level','?')}\n\n"
+            f"📊 *Analyse approfondie* — {datetime.now().strftime('%H:%M')}\n"
+            f"Mode: {mode} | Risque: {analysis.get('risk_level','?')}\n"
+            f"💡 Meilleure opportunité: {best}\n\n"
             f"_{analysis.get('market_summary','')}_\n\n"
         )
 
         results = []
         for d in analysis.get("decisions", []):
-            if d["confidence"] < RISK["min_confidence"]:
-                results.append(f"⏭ {d['symbol'].replace('USDT','')}: ignoré (confiance {d['confidence']}%)")
+            sym = d.get("symbol", "?")
+            action = d["action"]
+            confidence = d["confidence"]
+            reason = d["reason"]
+
+            if confidence < RISK["min_confidence"]:
                 continue
 
-            if d["action"] in ("BUY", "SELL"):
-                result = execute_trade(
-                    binance_client, d["symbol"], d["action"],
-                    d.get("amount_pct", 10), portfolio, prices
-                )
-                results.append(result)
-                results.append(f"   💬 {d['reason']}")
+            if action == "BUY":
+                results.append(f"✅ *ACHAT {sym}* (confiance {confidence}%)\n   {reason}")
+            elif action == "SELL":
+                results.append(f"🔴 *VENTE {sym}* (confiance {confidence}%)\n   {reason}")
             else:
-                results.append(f"⏸ {d['symbol'].replace('USDT','')}: HOLD — {d['reason']}")
+                results.append(f"⏸ *HOLD {sym}*\n   {reason}")
+
+        if not results:
+            results.append("⏸ Aucune action — marché incertain, on attend.")
 
         telegram(header + "\n".join(results))
-        log.info("Cycle terminé — rapport envoyé sur Telegram")
+        log.info(f"Analyse approfondie terminée — {len(results)} décisions")
 
     except Exception as e:
-        log.error(f"Erreur cycle: {e}", exc_info=True)
-        telegram_alert("Erreur agent", str(e), "⚠️")
+        log.error(f"Erreur analyse Claude: {e}", exc_info=True)
+        telegram_alert("Erreur analyse", str(e), "⚠️")
+
+# ─── CYCLES ──────────────────────────────────────────────────────────────────
+
+def cycle_rapide():
+    log.info("Cycle rapide 15min")
+    prices = get_prices()
+    if prices:
+        quick_analysis(prices)
+
+def cycle_profond():
+    log.info("Cycle approfondi 1h")
+    prices = get_prices()
+    deep_analysis(prices)
 
 # ─── DÉMARRAGE ───────────────────────────────────────────────────────────────
 
 def main():
-    log.info("Agent crypto démarré")
+    log.info("Agent crypto v2 démarré")
     telegram_alert(
-        "Agent démarré",
+        "Agent v2 démarré 🚀",
         f"Mode: {'SIMULATION' if RISK['simulation_mode'] else 'RÉEL'}\n"
-        f"Coins: {', '.join(COINS)}\n"
-        f"Analyse toutes les heures",
+        f"Cryptos suivies: {len(COINS)}\n"
+        f"Analyse rapide: toutes les 15min\n"
+        f"Analyse Claude: toutes les heures\n"
+        f"Seuil alerte: {RISK['alert_threshold']}% de variation",
         "🚀"
     )
-    binance_client = None
+
     # Premier cycle immédiat
-    run_cycle(binance_client)
-    # Ensuite toutes les heures
-    schedule.every(1).hours.do(run_cycle, binance_client=binance_client)
+    cycle_profond()
+
+    # Analyse rapide toutes les 15 minutes
+    schedule.every(15).minutes.do(cycle_rapide)
+
+    # Analyse approfondie toutes les heures
+    schedule.every(1).hours.do(cycle_profond)
+
     while True:
         schedule.run_pending()
         time.sleep(60)
+
 if __name__ == "__main__":
     main()
