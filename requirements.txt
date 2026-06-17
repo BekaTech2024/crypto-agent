@@ -1,0 +1,22 @@
+"""
+Lanceur principal — démarre l'agent ET le bot Telegram en parallèle
+"""
+
+import threading
+import logging
+import os
+from agent.trading_agent import main as run_agent
+from agent.telegram_bot import run_telegram_bot
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s'
+)
+
+if __name__ == "__main__":
+    # Thread 1 : agent de trading
+    t1 = threading.Thread(target=run_agent, daemon=True)
+    t1.start()
+
+    # Thread 2 : bot Telegram (bloquant)
+    run_telegram_bot()
