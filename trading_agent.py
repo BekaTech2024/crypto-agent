@@ -287,8 +287,7 @@ def deep_analysis(prices):
         pnl_pct = (pnl / INITIAL_VALUE) * 100
 
         fg      = get_fear_greed()
-        news = get_market_news()
-time.sleep(3)
+        news    = get_market_news()
 
         technicals = {sym: compute_technicals(sym, prices) for sym in prices}
 
