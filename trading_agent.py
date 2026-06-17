@@ -65,9 +65,10 @@ def telegram(msg):
     try:
         requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg[:4000], "parse_mode": "Markdown"},
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg[:3000], "parse_mode": "Markdown"},
             timeout=10
         )
+        log.info(f"Telegram sendMessage: {len(msg)} chars")
     except Exception as e:
         log.error(f"Telegram error: {e}")
 
