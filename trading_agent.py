@@ -25,11 +25,9 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# ─── CONFIG ──────────────────────────────────────────────────────────────────
-
-ANTHROPIC_API_KEY  = os.getenv("ANTHROPIC_API_KEY")
-TELEGRAM_TOKEN     = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+TELEGRAM_TOKEN    = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID  = os.getenv("TELEGRAM_CHAT_ID")
 
 RISK = {
     "max_trade_pct":   0.20,
@@ -37,23 +35,11 @@ RISK = {
     "take_profit_pct": 0.15,
     "min_confidence":  70,
     "simulation_mode": True,
-    "alert_threshold": 3.0,  # % de variation pour alerte rapide
+    "alert_threshold": 3.0,
+    "min_profit_after_fees": 1.5,
+    "trading_fee": 0.1,
 }
 
-COINS = [
-    "bitcoin", "ethereum", "solana", "binancecoin",
-    "cardano", "avalanche-2", "chainlink", "polkadot",
-    "ripple", "matic-network"
-]
-
-SYMBOLS = {
-    "bitcoin": "BTC", "ethereum": "ETH", "solana": "SOL",
-    "binancecoin": "BNB", "cardano": "ADA", "avalanche-2": "AVAX",
-    "chainlink": "LINK", "polkadot": "DOT", "ripple": "XRP",
-    "matic-network": "MATIC"
-}
-
-# Portfolio simulé
 PORTFOLIO = {
     "USDT": 8000.0,
     "BTC":  0.05,
@@ -70,9 +56,7 @@ PORTFOLIO = {
 
 prev_prices = {}
 
-# ─── TELEGRAM ────────────────────────────────────────────────────────────────
-
-def telegram(msg: str):
+def telegram(msg):
     try:
         requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
@@ -82,31 +66,30 @@ def telegram(msg: str):
     except Exception as e:
         log.error(f"Telegram error: {e}")
 
-def telegram_alert(title: str, body: str, emoji="🤖"):
+def telegram_alert(title, body, emoji="🤖"):
     telegram(f"{emoji} *{title}*\n\n{body}")
 
-# ─── PRIX ────────────────────────────────────────────────────────────────────
-
-def get_prices() -> dict:
+def get_prices():
     try:
-        symbols = ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT",
-                   "ADAUSDT","AVAXUSDT","LINKUSDT","DOTUSDT",
-                   "XRPUSDT","MATICUSDT"]
-        url = "https://api.binance.com/api/v3/ticker/24hr"
-        r = requests.get(url, timeout=15)
-        data = r.json()
-        if isinstance(data, list):
-    lookup = {d["symbol"]: d for d in data}
-else:
-    log.error(f"Format inattendu: {data}")
-    return {}
-        prices = {}
+        symbols = [
+            "BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT",
+            "ADAUSDT","AVAXUSDT","LINKUSDT","DOTUSDT",
+            "XRPUSDT","MATICUSDT"
+        ]
         name_map = {
             "BTCUSDT":"BTC","ETHUSDT":"ETH","SOLUSDT":"SOL",
             "BNBUSDT":"BNB","ADAUSDT":"ADA","AVAXUSDT":"AVAX",
             "LINKUSDT":"LINK","DOTUSDT":"DOT","XRPUSDT":"XRP",
             "MATICUSDT":"MATIC"
         }
+        url = "https://api.binance.com/api/v3/ticker/24hr"
+        r = requests.get(url, timeout=15)
+        data = r.json()
+        if not isinstance(data, list):
+            log.error(f"Format inattendu Binance: {str(data)[:100]}")
+            return {}
+        lookup = {d["symbol"]: d for d in data}
+        prices = {}
         for sym, name in name_map.items():
             if sym in lookup:
                 d = lookup[sym]
@@ -121,62 +104,49 @@ else:
         log.error(f"Erreur prix: {e}")
         return {}
 
-# ─── ANALYSE RAPIDE (sans Claude) ────────────────────────────────────────────
-
-def quick_analysis(prices: dict):
-    """Analyse rapide toutes les 15min — détecte les mouvements brusques"""
+def quick_analysis(prices):
     global prev_prices
     alerts = []
-
     for symbol, data in prices.items():
         if symbol in prev_prices:
             prev = prev_prices[symbol]["price"]
             curr = data["price"]
             change_pct = ((curr - prev) / prev) * 100
-
             if abs(change_pct) >= RISK["alert_threshold"]:
                 direction = "🚀" if change_pct > 0 else "📉"
                 alerts.append(
-                    f"{direction} *{symbol}* : {change_pct:+.2f}% en 15min\n"
-                    f"   Prix: ${curr:,.2f}"
+                    f"{direction} *{symbol}*: {change_pct:+.2f}% en 15min\n"
+                    f"   Prix: ${curr:,.4f}"
                 )
-
     if alerts:
-        msg = "⚡ *Alerte mouvement rapide*\n\n" + "\n".join(alerts)
-        telegram(msg)
-        log.info(f"Alertes envoyées: {len(alerts)}")
-
+        telegram("⚡ *Alerte mouvement rapide*\n\n" + "\n".join(alerts))
     prev_prices = {s: d for s, d in prices.items()}
 
-# ─── ANALYSE APPROFONDIE (avec Claude) ───────────────────────────────────────
-
-def deep_analysis(prices: dict):
-    """Analyse complète toutes les heures avec Claude Sonnet"""
+def deep_analysis(prices):
     if not prices:
         log.error("Pas de prix disponibles")
         telegram_alert("Erreur", "Impossible de récupérer les prix", "⚠️")
         return
-
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
         portfolio_value = PORTFOLIO.get("USDT", 0)
         for symbol, data in prices.items():
-            held = PORTFOLIO.get(symbol, 0)
-            portfolio_value += held * data["price"]
+            portfolio_value += PORTFOLIO.get(symbol, 0) * data["price"]
+
+        fee_pct = RISK["trading_fee"] * 2
+        min_profit = RISK["min_profit_after_fees"]
 
         price_lines = "\n".join([
             f"  {sym}: ${d['price']:,.4f} ({d['change']:+.2f}% 24h, vol ${d['volume']/1e6:.0f}M)"
             for sym, d in prices.items()
         ])
-
         holdings_lines = "\n".join([
-            f"  {sym}: {PORTFOLIO.get(sym, 0)} = ${PORTFOLIO.get(sym, 0) * d['price']:,.0f}"
+            f"  {sym}: {PORTFOLIO.get(sym,0)} = ${PORTFOLIO.get(sym,0)*d['price']:,.0f}"
             for sym, d in prices.items()
             if PORTFOLIO.get(sym, 0) > 0
         ])
 
-        prompt = f"""Tu es un agent de trading crypto autonome expert. Analyse ces données et génère des décisions précises.
+        prompt = f"""Tu es un agent de trading crypto autonome expert. Analyse et génère des décisions précises.
 
 MARCHÉ ({datetime.now().strftime('%Y-%m-%d %H:%M')} UTC):
 {price_lines}
@@ -185,12 +155,14 @@ PORTEFEUILLE SIMULÉ (total ~${portfolio_value:,.0f} USDT):
   Cash USDT: ${PORTFOLIO.get('USDT', 0):,.2f}
 {holdings_lines}
 
-RÈGLES:
+RÈGLES IMPORTANTES:
+- Frais par trade: {fee_pct:.1f}% aller-retour
+- Profit minimum net après frais: +{min_profit}%
+- Ne pas trader si profit estimé < {min_profit + fee_pct}% brut
 - Max {RISK['max_trade_pct']*100:.0f}% du portfolio par trade
 - Stop-loss: -{RISK['stop_loss_pct']*100:.0f}%
 - Take-profit: +{RISK['take_profit_pct']*100:.0f}%
-- Exécuter seulement si confiance >= {RISK['min_confidence']}%
-- Analyse momentum, volume, tendance 24h
+- Confiance minimum: {RISK['min_confidence']}%
 
 Réponds UNIQUEMENT en JSON valide:
 {{
@@ -201,6 +173,7 @@ Réponds UNIQUEMENT en JSON valide:
       "amount_pct": 10,
       "reason": "raison courte",
       "confidence": 78,
+      "estimated_profit_pct": 5.2,
       "stop_loss": 61000,
       "take_profit": 78000
     }}
@@ -215,15 +188,11 @@ Réponds UNIQUEMENT en JSON valide:
             max_tokens=1500,
             messages=[{"role": "user", "content": prompt}]
         )
-
-        raw = message.content[0].text.strip()
-        raw = raw.replace("```json", "").replace("```", "").strip()
+        raw = message.content[0].text.strip().replace("```json","").replace("```","").strip()
         analysis = json.loads(raw)
 
-        # Construire le rapport Telegram
         mode = "🔴 RÉEL" if not RISK["simulation_mode"] else "🟡 SIMULATION"
         best = analysis.get("best_opportunity", "—")
-
         header = (
             f"📊 *Analyse approfondie* — {datetime.now().strftime('%H:%M')}\n"
             f"Mode: {mode} | Risque: {analysis.get('risk_level','?')}\n"
@@ -233,32 +202,35 @@ Réponds UNIQUEMENT en JSON valide:
 
         results = []
         for d in analysis.get("decisions", []):
-            sym = d.get("symbol", "?")
+            sym = d.get("symbol","?")
             action = d["action"]
             confidence = d["confidence"]
             reason = d["reason"]
+            profit = d.get("estimated_profit_pct", 0)
+            fee_total = RISK["trading_fee"] * 2
+            net_profit = profit - fee_total
 
             if confidence < RISK["min_confidence"]:
                 continue
-
+            if action in ("BUY","SELL") and net_profit < RISK["min_profit_after_fees"]:
+                results.append(f"⏭ *{sym}*: ignoré (profit net {net_profit:.1f}% < minimum {RISK['min_profit_after_fees']}%)")
+                continue
             if action == "BUY":
-                results.append(f"✅ *ACHAT {sym}* (confiance {confidence}%)\n   {reason}")
+                results.append(f"✅ *ACHAT {sym}* (confiance {confidence}%)\n   Profit estimé net: +{net_profit:.1f}%\n   {reason}")
             elif action == "SELL":
                 results.append(f"🔴 *VENTE {sym}* (confiance {confidence}%)\n   {reason}")
             else:
-                results.append(f"⏸ *HOLD {sym}*\n   {reason}")
+                results.append(f"⏸ *HOLD {sym}* — {reason}")
 
         if not results:
             results.append("⏸ Aucune action — marché incertain, on attend.")
 
         telegram(header + "\n".join(results))
-        log.info(f"Analyse approfondie terminée — {len(results)} décisions")
+        log.info(f"Analyse terminée — {len(results)} décisions")
 
     except Exception as e:
         log.error(f"Erreur analyse Claude: {e}", exc_info=True)
         telegram_alert("Erreur analyse", str(e), "⚠️")
-
-# ─── CYCLES ──────────────────────────────────────────────────────────────────
 
 def cycle_rapide():
     log.info("Cycle rapide 15min")
@@ -271,29 +243,20 @@ def cycle_profond():
     prices = get_prices()
     deep_analysis(prices)
 
-# ─── DÉMARRAGE ───────────────────────────────────────────────────────────────
-
 def main():
     log.info("Agent crypto v2 démarré")
     telegram_alert(
         "Agent v2 démarré 🚀",
         f"Mode: {'SIMULATION' if RISK['simulation_mode'] else 'RÉEL'}\n"
-        f"Cryptos suivies: {len(COINS)}\n"
+        f"Cryptos: BTC ETH SOL BNB ADA AVAX LINK DOT XRP MATIC\n"
         f"Analyse rapide: toutes les 15min\n"
         f"Analyse Claude: toutes les heures\n"
-        f"Seuil alerte: {RISK['alert_threshold']}% de variation",
+        f"Frais pris en compte: {RISK['trading_fee']*2:.1f}% aller-retour",
         "🚀"
     )
-
-    # Premier cycle immédiat
     cycle_profond()
-
-    # Analyse rapide toutes les 15 minutes
     schedule.every(15).minutes.do(cycle_rapide)
-
-    # Analyse approfondie toutes les heures
     schedule.every(1).hours.do(cycle_profond)
-
     while True:
         schedule.run_pending()
         time.sleep(60)
