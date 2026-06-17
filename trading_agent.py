@@ -71,29 +71,32 @@ def telegram_alert(title, body, emoji="🤖"):
 
 def get_prices():
     try:
-        pairs = {
-    "XXBTZUSD":"BTC","XETHZUSD":"ETH","SOLUSDT":"SOL",
-    "ADAUSD":"ADA","AVAXUSD":"AVAX","LINKUSD":"LINK",
-    "DOTUSD":"DOT","XRPUSD":"XRP","MATICUSD":"MATIC"
-}
+        pairs_map = {
+            "XBTUSD":  "BTC",
+            "ETHUSD":  "ETH",
+            "SOLUSD":  "SOL",
+            "ADAUSD":  "ADA",
+            "AVAXUSD": "AVAX",
+            "LINKUSD": "LINK",
+            "DOTUSD":  "DOT",
+            "XRPUSD":  "XRP",
+        }
         url = "https://api.kraken.com/0/public/Ticker"
-        params = {"pair": "XXBTZUSD,XETHZUSD,SOLUSDT,ADAUSD,AVAXUSD,LINKUSD,DOTUSD,XRPUSD,MATICUSD"}
-        r = requests.get(url, params=params, timeout=15)
+        r = requests.get(url, timeout=15)
         data = r.json()
         if data.get("error"):
             log.error(f"Erreur Kraken: {data['error']}")
             return {}
         prices = {}
-        for pair, symbol in pairs.items():
-            result = data.get("result", {})
-            for key, val in result.items():
-                if pair[:3] in key or pair in key:
-                    prices[symbol] = {
-                        "price":  float(val["c"][0]),
-                        "change": 0.0,
-                        "volume": float(val["v"][1]),
-                    }
-                    break
+        result = data.get("result", {})
+        for pair, symbol in pairs_map.items():
+            if pair in result:
+                val = result[pair]
+                prices[symbol] = {
+                    "price":  float(val["c"][0]),
+                    "change": float(val["p"][1]),
+                    "volume": float(val["v"][1]),
+                }
         log.info(f"Prix récupérés: {len(prices)} cryptos")
         return prices
     except Exception as e:
