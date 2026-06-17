@@ -128,7 +128,7 @@ def get_market_news():
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         msg = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=800,
+            max_tokens=400,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             messages=[{
                 "role": "user",
@@ -287,7 +287,8 @@ def deep_analysis(prices):
         pnl_pct = (pnl / INITIAL_VALUE) * 100
 
         fg      = get_fear_greed()
-        news    = get_market_news()
+        news = get_market_news()
+time.sleep(3)
 
         technicals = {sym: compute_technicals(sym, prices) for sym in prices}
 
@@ -395,7 +396,7 @@ Réponds UNIQUEMENT en JSON valide:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         message = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=2500,
+            max_tokens=4000,
             messages=[{"role": "user", "content": prompt}]
         )
 
