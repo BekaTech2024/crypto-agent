@@ -95,11 +95,12 @@ def get_prices() -> dict:
             f"?ids={ids}&vs_currencies=usd"
             f"&include_24hr_change=true&include_24hr_vol=true"
         )
-        r = requests.get(url, timeout=15)
+        headers = {"accept": "application/json"}
+        r = requests.get(url, timeout=15, headers=headers)
         data = r.json()
         prices = {}
         for coin_id in COINS:
-            if coin_id in data:
+            if coin_id in data and "usd" in data[coin_id]:
                 prices[SYMBOLS[coin_id]] = {
                     "price":  data[coin_id]["usd"],
                     "change": data[coin_id].get("usd_24h_change", 0),
